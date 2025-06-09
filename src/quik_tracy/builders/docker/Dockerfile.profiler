@@ -1,0 +1,117 @@
+############################
+# 1. build stage
+############################
+# Select the correct emscripten image based on architecture
+
+ARG TARGETARCH
+FROM emscripten/emsdk:4.0.10-arm64 AS emscripten-env-arm64
+FROM emscripten/emsdk:latest AS emscripten-env-amd64
+
+# Use conditional FROM based on TARGETARCH
+FROM emscripten-env-${TARGETARCH} AS emscripten-env
+
+# Get Tracy source from tracy-base
+FROM tracy-base:latest AS build
+
+# Copy emscripten from the official image
+COPY --from=emscripten-env /emsdk /emsdk
+
+# Set up emscripten environment
+ENV PATH="/emsdk:/emsdk/upstream/emscripten:${PATH}"
+ENV EMSDK="/emsdk"
+ENV EM_CONFIG="/emsdk/.emscripten"
+ENV EM_CACHE="/emsdk/.emscripten_cache"
+
+# Install make (required for emmake)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        make python3 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Use the Tracy source from tracy-base (available at ${TRACY_SRC})
+WORKDIR ${TRACY_SRC}
+
+# Build Tracy profiler with emscripten
+RUN /bin/bash -c "source /emsdk/emsdk_env.sh && \
+    echo '=== Checking Tracy structure ===' && \
+    ls -la ${TRACY_SRC}/ && \
+    echo '=== Looking for profiler directory ===' && \
+    find ${TRACY_SRC} -name '*profiler*' -type d && \
+    echo '=== Building Tracy profiler specifically ===' && \
+    cd ${TRACY_SRC}/profiler && \
+    mkdir -p build && \
+    cd build && \
+    emcmake cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_EXE_LINKER_FLAGS='-s USE_FREETYPE=1 -s USE_HARFBUZZ=1' && \
+    emmake make -j\$(nproc) && \
+    echo '=== Looking for web files after build ===' && \
+    find . -name '*.html' -o -name '*.js' -o -name '*.wasm' -o -name '*.data'"
+
+# Create output directory and copy built files
+RUN mkdir -p /out && \
+    echo "=== Build directory contents ===" && \
+    ls -la ${TRACY_SRC}/profiler/build/ && \
+    echo "=== Copying build files ===" && \
+    cp -r ${TRACY_SRC}/profiler/build/* /out/ && \
+    echo "=== Output directory contents ===" && \
+    ls -la /out/ && \
+    echo "=== Web files found ===" && \
+    find /out -name "*.html" -o -name "*.js" -o -name "*.wasm" -o -name "*.data" && \
+    echo "=== Total files in output ===" && \
+    find /out -type f | wc -l
+
+############################
+# 2. runtime stage
+############################
+FROM python:3.11-slim
+ARG DEBIAN_FRONTEND=noninteractive
+LABEL org.opencontainers.image.source="https://github.com/wolfpld/tracy"
+
+# Install python rich for better console output
+RUN pip install rich
+
+# Create directory for Tracy web files
+RUN mkdir -p /tracy-web
+
+# Copy built Tracy profiler files from build stage
+COPY --from=build /out/ /tracy-web/
+
+# Debug: Show what files were copied
+RUN echo "=== Files copied to runtime stage ===" && \
+    ls -la /tracy-web/ && \
+    echo "=== Looking for web files ===" && \
+    find /tracy-web -name "*.html" -o -name "*.js" -o -name "*.wasm" -o -name "*.data" && \
+    echo "=== Total files in tracy-web ===" && \
+    find /tracy-web -type f | wc -l
+
+# Write the Python server script directly with minimal rich logging
+RUN echo 'import os\n\
+import sys\n\
+from http.server import SimpleHTTPRequestHandler, HTTPServer\n\
+from rich.console import Console\n\
+\n\
+console = Console(force_terminal=True, color_system="truecolor")\n\
+\n\
+class COOP_CEOP_RequestHandler(SimpleHTTPRequestHandler):\n\
+    def end_headers(self):\n\
+        # Tell the browser: we are cross-origin isolated\n\
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")\n\
+        self.send_header("Cross-Origin-Embedder-Policy", "require-corp")\n\
+        super().end_headers()\n\
+\n\
+if __name__ == "__main__":\n\
+    # Serve on port 8000 with rich console\n\
+    server_address = ("", 8000)\n\
+    httpd = HTTPServer(server_address, COOP_CEOP_RequestHandler)\n\
+    console.print("[bold blue] WASM Tracy Profiler[/bold blue] running on [cyan]http://localhost:8000 ...[/cyan]")\n\
+    console.print("[yellow] ⚠️ Chrome browser required. No live-capture is supporter on the web. [/yellow]")\n\
+    httpd.serve_forever()\n' > /tracy-web/serve.py
+
+WORKDIR /tracy-web
+
+# Expose port 8000
+EXPOSE 8000
+
+# Run the Python server
+CMD ["python3", "serve.py"]

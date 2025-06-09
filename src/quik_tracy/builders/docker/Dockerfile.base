@@ -1,0 +1,25 @@
+# Build-time Base Image for Tracy
+
+FROM ubuntu:22.04 AS tracy-base
+ARG DEBIAN_FRONTEND=noninteractive
+ARG TRACY_BRANCH=master
+ARG TRACY_REF="7e833e7ddce8bb36476b0452b2823c000dfad02b"
+
+# ---- tool-chain & common libraries
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential git cmake ninja-build pkg-config \
+    ca-certificates \
+    libtbb-dev       \
+    libfreetype-dev \
+    libzstd-dev      zlib1g-dev \
+    libdbus-1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- clone
+WORKDIR /src
+RUN git clone --branch "$TRACY_BRANCH" https://github.com/wolfpld/tracy.git
+RUN git -C tracy checkout "$TRACY_REF"
+
+ENV TRACY_SRC=/src/tracy

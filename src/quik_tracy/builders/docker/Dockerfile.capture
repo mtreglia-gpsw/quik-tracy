@@ -1,0 +1,36 @@
+############################
+# 1. build stage
+############################
+FROM tracy-base:latest AS build
+
+# ---- build tracy-capture
+WORKDIR ${TRACY_SRC}/capture
+RUN cmake -S . -B build \
+    -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/capture-install &&\
+    cmake --build build --config Release -j"$(nproc)" && \
+    cmake --install build --prefix /capture-install
+
+# ---- collect & strip
+RUN install -Dm755 /capture-install/bin/tracy-capture /out/tracy-capture && \
+    strip /out/tracy-capture
+
+
+############################
+# 2. runtime stage
+############################
+FROM ubuntu:22.04
+ARG DEBIAN_FRONTEND=noninteractive
+LABEL org.opencontainers.image.source="https://github.com/wolfpld/tracy"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libtbb12      \
+    libcapstone4  \
+    libzstd1      \
+    libdbus-1-3   \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /out/tracy-capture /usr/local/bin/tracy-capture
+ENTRYPOINT ["/usr/local/bin/tracy-capture"]

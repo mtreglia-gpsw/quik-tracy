@@ -1,0 +1,35 @@
+############################
+# 1. build stage
+############################
+FROM tracy-base:latest AS build
+
+WORKDIR ${TRACY_SRC}/csvexport
+
+# ---- configure & build --------------------------------------------------
+RUN cmake -S . -B build \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/csv-install && \
+    cmake --build build -j"$(nproc)" && \
+    cmake --install build --prefix /csv-install
+
+# ---- collect & strip ----------------------------------------------------
+RUN install -Dm755 /csv-install/bin/tracy-csvexport /out/tracy-csvexport && \
+    strip /out/tracy-csvexport
+
+
+
+############################
+# 2. runtime stage
+############################
+FROM ubuntu:22.04
+ARG DEBIAN_FRONTEND=noninteractive
+LABEL org.opencontainers.image.source="https://github.com/wolfpld/tracy"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libtbb12  zstd && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /out/tracy-csvexport /usr/local/bin/tracy-csvexport
+ENTRYPOINT ["/usr/local/bin/tracy-csvexport"]
