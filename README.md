@@ -163,6 +163,42 @@ quik-tracy report my-profile.csv --mode hdf5
 quik-tracy report my-profile.csv --path ./reports/
 ```
 
+## 🔄 Comparing Multiple Traces
+
+Compare multiple Tracy trace files to analyze performance changes between runs:
+
+```bash
+# Basic usage: compare two or more trace files
+quik-tracy compare baseline.tracy optimized.tracy
+
+# Compare CSVs directly
+quik-tracy compare baseline.csv optimized.csv
+
+# Specify output format (HTML or HDF5)
+quik-tracy compare baseline.tracy optimized.tracy --mode html
+
+# Custom output directory
+quik-tracy compare baseline.tracy optimized.tracy --path ./comparisons/
+
+# Custom output file name (without extension)
+quik-tracy compare baseline.tracy optimized.tracy --name my-comparison
+```
+
+**Options:**
+- `TRACE_FILES` (required): Two or more `.tracy` or `.csv` files to compare.
+- `--mode [hdf5|html]`: Output format for the comparison report (default: `html`).
+- `--path PATH`: Directory to save the comparison report (default: current directory).
+- `--name TEXT`: Custom name for the output comparison report file (without extension).
+
+The output will be saved as `my-comparison.html` or `my-comparison.h5` if `--name my-comparison` is provided, otherwise a default name is used.
+
+**Example output:**  
+- [View the HTML source on GitHub](./examples/tracy_comparison_example.html)  
+- [View the rendered report (via githack.com)](https://raw.githack.com/mtreglia-gpsw/quik-tracy/main/examples/tracy_comparison_example.html)
+
+> **Note:**  
+> GitHub displays HTML files as source code. To see the report as a web page, use the githack.com link above or download the file and open it in your browser.
+
 ## 🚀 Complete Sessions
 
 Run end-to-end profiling workflows:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quik-tracy"
-version = "0.3.0"
+version = "0.4.0"
 description = "A comprehensive tool for Tracy profiling with Docker and local support - build, capture, analyze, and export Tracy profiling data"
 dependencies = ["rich_click", "docker", "pandas", "tables"]
 

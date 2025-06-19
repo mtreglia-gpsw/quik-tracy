@@ -104,3 +104,22 @@ def session(name: str, host: str, port: int, capture_mode: str, export_mode: str
     log.info(f"  Trace file: {trace_path}")
     log.info(f"  CSV file: {csv_path}")
     log.info(f"  Report file: {report_path}")
+
+
+@main.command()
+@click.argument("trace_files", nargs=-1, required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--mode", type=click.Choice(["hdf5", "html"]), default="html", help="Comparison report format")
+@click.option("--path", type=click.Path(path_type=Path), default=Path.cwd(), help="Directory to save comparison report")
+@click.option("--name", default=None, help="Custom name for the output comparison report file (without extension)")
+def compare(trace_files: tuple, mode: str, path: Path, name: str | None):
+    """Compare multiple Tracy trace files for performance analysis."""
+    if len(trace_files) < 2:
+        log.error("At least 2 trace files required for comparison")
+        return
+
+    compare_mode = api.CompareMode(mode)
+    report_path = api.run_compare(list(trace_files), compare_mode, path, name=name)
+
+    log.info(f"✅ Comparison completed: {report_path}")
+    log.info(f"  Files compared: {len(trace_files)}")
+    log.info(f"  Report format: {mode.upper()}")
