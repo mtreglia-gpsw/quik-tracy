@@ -1,7 +1,7 @@
 import abc
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import Sequence
 
 
 @dataclass
@@ -11,6 +11,6 @@ class TracyCompareBase(abc.ABC):
     path: Path = Path.cwd()
 
     @abc.abstractmethod
-    def compare(self, csv_paths: List[Path]) -> Path:
-        """Compare multiple Tracy CSV files and return path to comparison report."""
+    def compare(self, trace_paths: Sequence[Path], name: str | None = None) -> Path:
+        """Compare multiple Tracy trace/CSV files and return path to comparison report."""
         raise NotImplementedError("Subclasses must implement this method.")

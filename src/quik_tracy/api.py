@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 import logging
 from pathlib import Path
-from typing import List
+from typing import Sequence
 
 from .capture import TracyCaptureDocker, TracyCaptureProcess
 from .export import TracyExportCSVDocker, TracyExportCSVProcess
@@ -141,30 +141,22 @@ def run_session(
     return trace_path, csv_path, report_path
 
 
-def run_compare(trace_paths: List[Path], mode: CompareMode = CompareMode.HTML, path: Path = Path.cwd(), name: str | None = None) -> Path:
-    """Functional helper—compare multiple Tracy trace files and return path to comparison report."""
-    if len(trace_paths) < 2:
-        raise ValueError("At least 2 trace files required for comparison")
+def run_compare(
+    trace_paths: Sequence[Path],
+    mode: CompareMode = CompareMode.HTML,
+    path: Path = Path.cwd(),
+    name: str | None = None,
+) -> Path:
+    """Functional helper—compare multiple Tracy trace files and return path to comparison report.
 
-    log.debug(f"Starting Tracy comparison for {len(trace_paths)} trace files, mode: {mode.value}")
+    Accepts .tracy or .csv files; conversion is handled automatically.
+    """
+    log.debug(f"Starting Tracy comparison for {len(trace_paths)} files, mode: {mode.value}")
 
-    # Convert trace files to CSV if needed
-    csv_paths = []
-    for trace_path in trace_paths:
-        if trace_path.suffix.lower() == ".tracy":
-            # Convert tracy to csv first
-            csv_path = run_export(trace_path, RunMode.AUTO, trace_path.parent)
-            csv_paths.append(csv_path)
-        elif trace_path.suffix.lower() == ".csv":
-            csv_paths.append(trace_path)
-        else:
-            raise ValueError(f"Unsupported file format: {trace_path.suffix}")
-
-    # Generate comparison report
     match mode:
         case CompareMode.HDF5:
-            return TracyCompareHdf5(path).compare(csv_paths, name=name)
+            return TracyCompareHdf5(path).compare(trace_paths, name=name)
         case CompareMode.HTML:
-            return TracyCompareHTML(path).compare(csv_paths, name=name)
+            return TracyCompareHTML(path).compare(trace_paths, name=name)
         case _:
             raise ValueError(f"Unsupported compare mode: {mode}")

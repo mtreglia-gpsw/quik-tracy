@@ -113,10 +113,6 @@ def session(name: str, host: str, port: int, capture_mode: str, export_mode: str
 @click.option("--name", default=None, help="Custom name for the output comparison report file (without extension)")
 def compare(trace_files: tuple, mode: str, path: Path, name: str | None):
     """Compare multiple Tracy trace files for performance analysis."""
-    if len(trace_files) < 2:
-        log.error("At least 2 trace files required for comparison")
-        return
-
     compare_mode = api.CompareMode(mode)
     report_path = api.run_compare(list(trace_files), compare_mode, path, name=name)
 

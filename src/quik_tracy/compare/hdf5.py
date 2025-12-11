@@ -1,23 +1,22 @@
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import List
+from typing import Sequence
 
 import pandas as pd
 
-from .base import TracyCompareBase
+from .csv import TracyCompareCSV
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class TracyCompareHdf5(TracyCompareBase):
-    """Generate HDF5 comparison report from multiple Tracy CSV files."""
+class TracyCompareHdf5(TracyCompareCSV):
+    """Generate HDF5 comparison report from multiple Tracy trace files."""
 
-    def compare(self, csv_paths: List[Path], name: str | None = None) -> Path:
-        """Main entry: load CSVs, compute comparison, store HDF5 and metrics."""
-        if len(csv_paths) < 2:
-            raise ValueError("At least 2 CSV files required for comparison")
+    def compare(self, trace_paths: Sequence[Path], name: str | None = None) -> Path:
+        """Load traces, compute comparison metrics, store HDF5."""
+        csv_paths = super().compare(trace_paths, name=name)
 
         dfs = self._load_dataframes(csv_paths)
         combined_df = pd.concat(dfs, ignore_index=True)
@@ -26,10 +25,9 @@ class TracyCompareHdf5(TracyCompareBase):
         summary = self._compute_summary_metrics(comparison_df, csv_paths)
         top_changes = self._compute_top_changes(comparison_df, csv_paths)
 
-        if name:
-            output_path = self.path / f"{name}.h5"
-        else:
-            output_path = self.path / f"tracy_comparison_{len(csv_paths)}_files.h5"
+        output_path = self.path / (name or f"tracy_comparison_{len(csv_paths)}_files")
+        output_path = output_path.with_suffix(".h5")
+
         with pd.HDFStore(output_path, "w") as store:
             store.put("raw_data", combined_df, format="table")
             store.put("comparison", comparison_df, format="table")
@@ -39,7 +37,7 @@ class TracyCompareHdf5(TracyCompareBase):
         logger.info(f"Comparison HDF5 saved to {output_path}")
         return output_path
 
-    def _load_dataframes(self, csv_paths: List[Path]) -> list[pd.DataFrame]:
+    def _load_dataframes(self, csv_paths: Sequence[Path]) -> list[pd.DataFrame]:
         """Load each CSV, add source metadata, return list of DataFrames."""
         dfs: list[pd.DataFrame] = []
         for idx, path in enumerate(csv_paths):
@@ -59,7 +57,7 @@ class TracyCompareHdf5(TracyCompareBase):
         count_col = next((c for c in ["counts", "count", "calls"] if c in columns), None)
         return function_col, avg_col, min_col, max_col, count_col
 
-    def _calculate_comparison_metrics(self, combined_df: pd.DataFrame, csv_paths: List[Path]) -> pd.DataFrame:
+    def _calculate_comparison_metrics(self, combined_df: pd.DataFrame, csv_paths: Sequence[Path]) -> pd.DataFrame:
         """Calculate function-level comparison metrics with baseline approach."""
         logger.info(f"Calculating comparison metrics for dataframe with columns: {list(combined_df.columns)}")
 
@@ -129,7 +127,7 @@ class TracyCompareHdf5(TracyCompareBase):
             max_diff = float("nan")
         row[f"{cmp_name}_max_perf_diff"] = max_diff
 
-    def _compute_summary_metrics(self, df: pd.DataFrame, csv_paths: List[Path]) -> dict:
+    def _compute_summary_metrics(self, df: pd.DataFrame, csv_paths: Sequence[Path]) -> dict:
         """Compute summary metrics for the comparison."""
         baseline = csv_paths[0].stem
         compare = csv_paths[1].stem if len(csv_paths) > 1 else None
@@ -162,7 +160,7 @@ class TracyCompareHdf5(TracyCompareBase):
             },
         }
 
-    def _compute_top_changes(self, df: pd.DataFrame, csv_paths: List[Path], n: int = 10) -> dict:
+    def _compute_top_changes(self, df: pd.DataFrame, csv_paths: Sequence[Path], n: int = 10) -> dict:
         """Compute top N improvements and regressions by absolute time saved/lost."""
         import numpy as np
 
