@@ -14,6 +14,8 @@ REPO = "https://github.com/wolfpld/tracy.git"
 class TracyBuilderLocal(TracyBuilderBase):
     """Local builder using git clone + cmake."""
 
+    portable: bool = False
+
     def build(self) -> bool:
         if not self.is_available():
             raise RuntimeError("Local build tools are not available")
@@ -57,6 +59,7 @@ class TracyBuilderLocal(TracyBuilderBase):
             install_path=str(install_path),
             build_type="Release",
             cpm_cache_path=str(cpm_cache_path),
+            portable=self.portable,
         )
         logger.info(f"Configuring {self.tool_name}")
         cmake.configure()

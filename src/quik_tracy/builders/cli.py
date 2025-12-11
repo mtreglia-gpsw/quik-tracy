@@ -31,6 +31,7 @@ def _build_options():
         f = click.option("--mode", type=click.Choice(["local", "docker", "auto"]), default="auto", help="Build mode")(f)
         f = click.option("--branch", default=api.BRANCH, help="Git branch")(f)
         f = click.option("--ref", default=api.REF, help="Git commit reference")(f)
+        f = click.option("--portable", is_flag=True, help="Build portable binaries with static linking")(f)
         return f
 
     return decorator
@@ -78,17 +79,19 @@ def clean(remove_all: bool):
 
 @build_group.command()
 @_build_options()
-def all(mode: str, branch: str, ref: str):
+def all(mode: str, branch: str, ref: str, portable: bool):
     """Build all Tracy tools."""
     try:
         build_mode = api.BuildMode(mode)
         tools = api.list_supported_tools()
         click.echo(f"Building {len(tools)} Tracy tools...")
+        if portable:
+            click.echo("(portable mode: static linking enabled)")
 
         failed_tools = []
         for tool_name in tools:
             click.echo(f"Building {tool_name}...")
-            success = api.build_tracy_tool(tool_name, build_mode, branch, ref)
+            success = api.build_tracy_tool(tool_name, build_mode, branch, ref, portable=portable)
             if success:
                 click.echo(click.style(f"  ✅ {tool_name}", fg="green"))
             else:
@@ -155,26 +158,26 @@ def status():
 # Tool-specific commands
 @build_group.command()
 @_build_options()
-def capture(mode: str, branch: str, ref: str):
+def capture(mode: str, branch: str, ref: str, portable: bool):
     """Build the Tracy capture tool."""
     build_mode = api.BuildMode(mode)
-    success = api.build_capture_tool(build_mode, branch, ref)
+    success = api.build_capture_tool(build_mode, branch, ref, portable=portable)
     _show_build_result("Tracy capture tool", success)
 
 
 @build_group.command()
 @_build_options()
-def csvexport(mode: str, branch: str, ref: str):
+def csvexport(mode: str, branch: str, ref: str, portable: bool):
     """Build the Tracy CSV export tool."""
     build_mode = api.BuildMode(mode)
-    success = api.build_csvexport_tool(build_mode, branch, ref)
+    success = api.build_csvexport_tool(build_mode, branch, ref, portable=portable)
     _show_build_result("Tracy CSV export tool", success)
 
 
 @build_group.command()
 @_build_options()
-def profiler(mode: str, branch: str, ref: str):
+def profiler(mode: str, branch: str, ref: str, portable: bool):
     """Build the Tracy profiler tool."""
     build_mode = api.BuildMode(mode)
-    success = api.build_profiler_tool(build_mode, branch, ref)
+    success = api.build_profiler_tool(build_mode, branch, ref, portable=portable)
     _show_build_result("Tracy profiler tool", success)

@@ -60,7 +60,13 @@ class DetailedBuildStatus:
     tools: dict[str, ToolStatus]
 
 
-def build_tracy_tool(tool_name: str, mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF) -> bool:
+def build_tracy_tool(
+    tool_name: str,
+    mode: BuildMode = BuildMode.AUTO,
+    branch: str = BRANCH,
+    ref: str = REF,
+    portable: bool = False,
+) -> bool:
     """
     Build a Tracy tool using the specified mode.
 
@@ -69,6 +75,7 @@ def build_tracy_tool(tool_name: str, mode: BuildMode = BuildMode.AUTO, branch: s
         mode: Build mode (local, image, or auto)
         branch: Git branch to use for building
         ref: Git commit reference to use for building
+        portable: If True, build with static linking for portable binaries
 
     Returns:
         bool: True if build was successful
@@ -79,12 +86,12 @@ def build_tracy_tool(tool_name: str, mode: BuildMode = BuildMode.AUTO, branch: s
     logger.debug(f"Building Tracy tool '{tool_name}' with mode: {mode.value}")
 
     if mode == BuildMode.LOCAL:
-        builder = TracyBuilderLocal(tool_name, branch, ref)
+        builder = TracyBuilderLocal(tool_name, branch, ref, portable=portable)
     elif mode == BuildMode.DOCKER:
         builder = TracyBuilderDocker(tool_name, branch, ref)
     elif mode == BuildMode.AUTO:
         # Try local first, fallback to image
-        local_builder = TracyBuilderLocal(tool_name, branch, ref)
+        local_builder = TracyBuilderLocal(tool_name, branch, ref, portable=portable)
         if local_builder.is_available():
             builder = local_builder
         else:
@@ -101,19 +108,25 @@ def build_tracy_tool(tool_name: str, mode: BuildMode = BuildMode.AUTO, branch: s
 
 
 # Convenience functions for specific tools
-def build_capture_tool(mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF) -> bool:
+def build_capture_tool(
+    mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF, portable: bool = False
+) -> bool:
     """Build the Tracy capture tool."""
-    return build_tracy_tool("tracy-capture", mode, branch, ref)
+    return build_tracy_tool("tracy-capture", mode, branch, ref, portable=portable)
 
 
-def build_csvexport_tool(mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF) -> bool:
+def build_csvexport_tool(
+    mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF, portable: bool = False
+) -> bool:
     """Build the Tracy CSV export tool."""
-    return build_tracy_tool("tracy-csvexport", mode, branch, ref)
+    return build_tracy_tool("tracy-csvexport", mode, branch, ref, portable=portable)
 
 
-def build_profiler_tool(mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF) -> bool:
+def build_profiler_tool(
+    mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF, portable: bool = False
+) -> bool:
     """Build the Tracy profiler tool."""
-    return build_tracy_tool("tracy-profiler", mode, branch, ref)
+    return build_tracy_tool("tracy-profiler", mode, branch, ref, portable=portable)
 
 
 def get_available_builders() -> BuilderAvailability:
