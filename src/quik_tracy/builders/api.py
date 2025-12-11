@@ -108,23 +108,17 @@ def build_tracy_tool(
 
 
 # Convenience functions for specific tools
-def build_capture_tool(
-    mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF, portable: bool = False
-) -> bool:
+def build_capture_tool(mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF, portable: bool = False) -> bool:
     """Build the Tracy capture tool."""
     return build_tracy_tool("tracy-capture", mode, branch, ref, portable=portable)
 
 
-def build_csvexport_tool(
-    mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF, portable: bool = False
-) -> bool:
+def build_csvexport_tool(mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF, portable: bool = False) -> bool:
     """Build the Tracy CSV export tool."""
     return build_tracy_tool("tracy-csvexport", mode, branch, ref, portable=portable)
 
 
-def build_profiler_tool(
-    mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF, portable: bool = False
-) -> bool:
+def build_profiler_tool(mode: BuildMode = BuildMode.AUTO, branch: str = BRANCH, ref: str = REF, portable: bool = False) -> bool:
     """Build the Tracy profiler tool."""
     return build_tracy_tool("tracy-profiler", mode, branch, ref, portable=portable)
 

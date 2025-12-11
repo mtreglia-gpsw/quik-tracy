@@ -6,16 +6,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from .base import TracyReportBase
+from .csv import TracyReportCSV
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class TracyReportHdf5(TracyReportBase):
+class TracyReportHdf5(TracyReportCSV):
     """Generate per-function min/avg/max table and save HTML."""
 
-    def report(self, csv_path: Path) -> Path:
+    def report(self, trace_path: Path) -> Path:
+        csv_path = super().report(trace_path)
         logger.info(f"Building DataFrame from {csv_path}")
         df = pd.read_csv(csv_path)
         output_path = self.path / csv_path.with_suffix(".h5").name
