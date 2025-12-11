@@ -82,6 +82,15 @@ quik-tracy build profiler  # Note: Docker mode only supports Chrome browser and 
 quik-tracy build all --branch master --ref 7e833e7ddce8bb36476b0452b2823c000dfad02b
 ```
 
+### Clean Build Cache
+```bash
+# Clean build cache (useful after Xcode/SDK updates or when encountering build issues)
+quik-tracy build clean
+
+# Clean everything including installed executables
+quik-tracy build clean --all
+```
+
 ## 📸 Capturing Profiles
 
 ### Basic Capture
