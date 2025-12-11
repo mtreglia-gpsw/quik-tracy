@@ -10,6 +10,7 @@ class CMake:
     install_path: str
     build_type: str = "Release"
     cpm_cache_path: str | None = None
+    portable: bool = False
 
     def configure(self, options: list[str] | None = None):
         """Run CMake configuration."""
@@ -28,6 +29,12 @@ class CMake:
         # Add CPM cache path if specified (speeds up builds by sharing downloaded packages)
         if self.cpm_cache_path:
             cmd.append(f"-DCPM_SOURCE_CACHE={self.cpm_cache_path}")
+
+        # Enable portable/static builds by downloading dependencies via CPM
+        if self.portable:
+            cmd.append("-DDOWNLOAD_CAPSTONE=ON")
+            cmd.append("-DDOWNLOAD_GLFW=ON")
+            cmd.append("-DDOWNLOAD_FREETYPE=ON")
 
         if options:
             cmd.extend(options)
