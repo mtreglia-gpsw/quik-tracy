@@ -16,6 +16,9 @@ env:
   # Default ref - can be overridden by workflow_dispatch input
   TRACY_REF: 16bac5f80790fb29ca2bd1eab903f02e8ea0732a
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
@@ -42,6 +45,23 @@ jobs:
       - name: Install quik-tracy
         run: |
           pip install -e .
+
+      - name: Cache CPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.quik-tracy/build/cpm-cache
+          key: cpm-${{ runner.os }}-${{ env.TRACY_REF }}
+          restore-keys: |
+            cpm-${{ runner.os }}-
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: ~/.quik-tracy/build
+          key: build-${{ runner.os }}-${{ env.TRACY_REF }}-${{ github.run_id }}
+          restore-keys: |
+            build-${{ runner.os }}-${{ env.TRACY_REF }}-
+            build-${{ runner.os }}-
 
       - name: Build Tracy tools
         run: |
