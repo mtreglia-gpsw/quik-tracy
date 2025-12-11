@@ -46,12 +46,17 @@ class TracyBuilderLocal(TracyBuilderBase):
         bin_install_path = install_path / "bin"
         bin_install_path.mkdir(parents=True, exist_ok=True)
 
+        # Shared CPM cache directory (avoids re-downloading packages for each tool)
+        cpm_cache_path = build_path / "cpm-cache"
+        cpm_cache_path.mkdir(parents=True, exist_ok=True)
+
         # Build the tool
         cmake = CMake(
             source_path=str(tool_source_path),
             build_path=str(tool_build_path),
             install_path=str(install_path),
             build_type="Release",
+            cpm_cache_path=str(cpm_cache_path),
         )
         logger.info(f"Configuring {self.tool_name}")
         cmake.configure()
