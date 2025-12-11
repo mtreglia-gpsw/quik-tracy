@@ -129,9 +129,9 @@ class Docker(AbstractContextManager["Docker"]):
         if dockerfile_path.exists():
             content = dockerfile_path.read_text()
             # Check for BuildKit features or multi-stage platform-specific builds
-            has_buildkit_features = ("--mount=" in content or "--cache=" in content or "--secret=" in content)
+            has_buildkit_features = "--mount=" in content or "--cache=" in content or "--secret=" in content
             # Check for multi-platform builds
-            has_platform_builds = ("arm64" in content)
+            has_platform_builds = "arm64" in content
 
             if has_buildkit_features or has_platform_builds:
                 needs_buildkit = True
