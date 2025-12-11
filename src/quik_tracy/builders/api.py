@@ -156,6 +156,64 @@ def list_supported_tools() -> list[str]:
     return ["tracy-capture", "tracy-csvexport", "tracy-profiler"]
 
 
+def get_build_directory() -> Path:
+    """
+    Get the base build directory for Tracy tools.
+
+    Returns:
+        Path: Path to the build directory (~/.quik-tracy)
+    """
+    return Path.home() / ".quik-tracy"
+
+
+def clean_build(remove_install: bool = False) -> tuple[bool, list[str]]:
+    """
+    Clean the Tracy build directory to force a fresh rebuild.
+
+    This removes cached CMake configurations, build artifacts, and optionally
+    the installed executables. Useful when encountering build issues due to
+    stale SDK paths, outdated caches, or after Xcode updates.
+
+    Args:
+        remove_install: If True, also remove installed executables.
+                       If False (default), only remove build cache.
+
+    Returns:
+        tuple[bool, list[str]]: (success, list of removed directories)
+    """
+    base_path = get_build_directory()
+    removed = []
+
+    if not base_path.exists():
+        logger.info("No build directory found, nothing to clean")
+        return True, removed
+
+    # Always remove the build directory (contains CMake cache and build artifacts)
+    build_path = base_path / "build"
+    if build_path.exists():
+        try:
+            shutil.rmtree(build_path)
+            removed.append(str(build_path))
+            logger.info(f"Removed build cache: {build_path}")
+        except Exception as e:
+            logger.error(f"Failed to remove build cache: {e}")
+            return False, removed
+
+    # Optionally remove installed executables
+    if remove_install:
+        install_path = base_path / "install"
+        if install_path.exists():
+            try:
+                shutil.rmtree(install_path)
+                removed.append(str(install_path))
+                logger.info(f"Removed installed tools: {install_path}")
+            except Exception as e:
+                logger.error(f"Failed to remove installed tools: {e}")
+                return False, removed
+
+    return True, removed
+
+
 def get_detailed_build_status() -> DetailedBuildStatus:
     """
     Get detailed status information about build environment and available tools.

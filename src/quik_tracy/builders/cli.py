@@ -43,6 +43,40 @@ def build_group():
 
 
 @build_group.command()
+@click.option("--all", "remove_all", is_flag=True, help="Also remove installed executables")
+def clean(remove_all: bool):
+    """Clean the build cache to force a fresh rebuild.
+    
+    This removes cached CMake configurations and build artifacts.
+    Useful when encountering build issues due to stale SDK paths,
+    outdated caches, or after Xcode/SDK updates.
+    """
+    try:
+        console = Console()
+        
+        if remove_all:
+            console.print("[yellow]Cleaning build cache and installed tools...[/yellow]")
+        else:
+            console.print("[yellow]Cleaning build cache...[/yellow]")
+        
+        success, removed = api.clean_build(remove_install=remove_all)
+        
+        if success:
+            if removed:
+                for path in removed:
+                    console.print(f"  [dim]Removed: {path}[/dim]")
+                console.print("[green]✅ Build cache cleaned successfully![/green]")
+            else:
+                console.print("[dim]Nothing to clean - build directory does not exist.[/dim]")
+        else:
+            console.print("[red]❌ Failed to clean build cache[/red]")
+            raise click.Abort()
+            
+    except Exception as e:
+        _handle_build_error(e)
+
+
+@build_group.command()
 @_build_options()
 def all(mode: str, branch: str, ref: str):
     """Build all Tracy tools."""
