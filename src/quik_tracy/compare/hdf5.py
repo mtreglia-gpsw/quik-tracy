@@ -43,8 +43,9 @@ class TracyCompareHdf5(TracyCompareCSV):
         for idx, path in enumerate(csv_paths):
             logger.info(f"Loading CSV {idx+1}/{len(csv_paths)}: {path}")
             df = pd.read_csv(path)
-            df["source_file"] = path.stem
-            df["source_index"] = idx
+            # Use index-based naming to avoid special character issues
+            df["_source_idx"] = idx
+            df["_source_name"] = path.stem
             dfs.append(df)
         return dfs
 
@@ -59,165 +60,199 @@ class TracyCompareHdf5(TracyCompareCSV):
 
     def _calculate_comparison_metrics(self, combined_df: pd.DataFrame, csv_paths: Sequence[Path]) -> pd.DataFrame:
         """Calculate function-level comparison metrics with baseline approach."""
-        logger.info(f"Calculating comparison metrics for dataframe with columns: {list(combined_df.columns)}")
+        logger.info(f"Calculating comparison metrics for columns: {list(combined_df.columns)}")
 
         # Detect Tracy CSV format columns
         function_col, avg_col, min_col, max_col, count_col = self._detect_columns(list(combined_df.columns))
-        if not function_col or not avg_col or not min_col or not max_col:
+        if not function_col or not avg_col:
             logger.warning(f"Could not detect Tracy CSV format. Available columns: {list(combined_df.columns)}")
-            logger.info("Returning raw combined data without function-level analysis")
             return combined_df
 
-        logger.info(f"Using function column: '{function_col}', timing columns: avg='{avg_col}', min='{min_col}', max='{max_col}'")
-        baseline, comparisons = csv_paths[0].stem, [p.stem for p in csv_paths[1:]]
-        grouped = combined_df.groupby([function_col, "source_file", "source_index"]).first().reset_index()
+        logger.info(f"Detected columns: func='{function_col}', avg='{avg_col}', min='{min_col}', max='{max_col}'")
+
+        # Group by function and source index
+        grouped = combined_df.groupby([function_col, "_source_idx"]).first().reset_index()
+        all_functions = grouped[function_col].unique()
 
         rows: list[dict] = []
-        for func in grouped[function_col].unique():
-            func_data = grouped[grouped[function_col] == func].sort_values("source_index")
+        for func in all_functions:
+            func_data = grouped[grouped[function_col] == func]
             row = {"function_name": func}
-            self._populate_baseline(row, func_data, baseline, avg_col, min_col, max_col, count_col)
-            for idx, cmp_name in enumerate(comparisons, start=1):
-                self._populate_comparison(row, func_data, idx, baseline, cmp_name, avg_col, min_col, max_col, count_col)
+
+            # Baseline (index 0)
+            baseline = func_data[func_data["_source_idx"] == 0]
+            if not baseline.empty:
+                b = baseline.iloc[0]
+                row["baseline_avg"] = b[avg_col]
+                row["baseline_min"] = b.get(min_col, float("nan")) if min_col else float("nan")
+                row["baseline_max"] = b.get(max_col, float("nan")) if max_col else float("nan")
+                row["baseline_count"] = int(b.get(count_col, 0)) if count_col else 0
+            else:
+                row["baseline_avg"] = float("nan")
+                row["baseline_min"] = float("nan")
+                row["baseline_max"] = float("nan")
+                row["baseline_count"] = 0
+
+            # Comparisons (indices 1, 2, ...)
+            for idx in range(1, len(csv_paths)):
+                prefix = f"cmp{idx}"
+                cmp_data = func_data[func_data["_source_idx"] == idx]
+
+                if not cmp_data.empty:
+                    c = cmp_data.iloc[0]
+                    c_avg = c[avg_col]
+                    c_min = c.get(min_col, float("nan")) if min_col else float("nan")
+                    c_max = c.get(max_col, float("nan")) if max_col else float("nan")
+                    c_cnt = int(c.get(count_col, 0)) if count_col else 0
+                else:
+                    c_avg = c_min = c_max = float("nan")
+                    c_cnt = 0
+
+                row[f"{prefix}_avg"] = c_avg
+                row[f"{prefix}_min"] = c_min
+                row[f"{prefix}_max"] = c_max
+                row[f"{prefix}_count"] = c_cnt
+
+                # Compute percent diff vs baseline
+                b_avg = row["baseline_avg"]
+                if pd.notna(b_avg) and pd.notna(c_avg) and b_avg != 0:
+                    row[f"{prefix}_avg_diff_pct"] = ((c_avg - b_avg) / b_avg) * 100
+                    row[f"{prefix}_avg_diff_ns"] = c_avg - b_avg
+                else:
+                    row[f"{prefix}_avg_diff_pct"] = float("nan")
+                    row[f"{prefix}_avg_diff_ns"] = float("nan")
+
             rows.append(row)
 
         result_df = pd.DataFrame(rows)
         logger.info(f"Generated comparison table: {len(result_df)} functions")
         return result_df
 
-    def _populate_baseline(self, row, func_data, base_name, avg, mn, mx, cnt):
-        """Add baseline metrics to a comparison row dict."""
-        data = func_data[func_data["source_index"] == 0]
-        values = data.iloc[0] if not data.empty else {}
-        row[f"{base_name}_avg_time"] = values.get(avg, float("nan"))
-        row[f"{base_name}_min_time"] = values.get(mn, float("nan"))
-        row[f"{base_name}_max_time"] = values.get(mx, float("nan"))
-        row[f"{base_name}_call_count"] = values.get(cnt, 0)
-
-    def _populate_comparison(self, row, func_data, idx, base_name, cmp_name, avg, mn, mx, cnt):
-        """Add comparison metrics and percent differences to a row dict."""
-        data = func_data[func_data["source_index"] == idx]
-        values = data.iloc[0] if not data.empty else {}
-        b_avg = row[f"{base_name}_avg_time"]
-        c_avg = values.get(avg, float("nan"))
-        row[f"{cmp_name}_avg_time"] = c_avg
-        row[f"{cmp_name}_min_time"] = values.get(mn, float("nan"))
-        row[f"{cmp_name}_max_time"] = values.get(mx, float("nan"))
-        row[f"{cmp_name}_call_count"] = values.get(cnt, 0)
-        # percent diff for avg
-        if b_avg and pd.notna(b_avg) and pd.notna(c_avg):
-            avg_diff = (c_avg - b_avg) / b_avg * 100
-        else:
-            avg_diff = float("nan")
-        row[f"{cmp_name}_avg_perf_diff"] = avg_diff
-        # percent diff for min
-        base_min = row[f"{base_name}_min_time"]
-        c_min = values.get(mn, float("nan"))
-        if pd.notna(base_min) and pd.notna(c_min) and base_min != 0:
-            min_diff = (c_min - base_min) / base_min * 100
-        else:
-            min_diff = float("nan")
-        row[f"{cmp_name}_min_perf_diff"] = min_diff
-        # percent diff for max
-        base_max = row[f"{base_name}_max_time"]
-        c_max = values.get(mx, float("nan"))
-        if pd.notna(base_max) and pd.notna(c_max) and base_max != 0:
-            max_diff = (c_max - base_max) / base_max * 100
-        else:
-            max_diff = float("nan")
-        row[f"{cmp_name}_max_perf_diff"] = max_diff
-
     def _compute_summary_metrics(self, df: pd.DataFrame, csv_paths: Sequence[Path]) -> dict:
         """Compute summary metrics for the comparison."""
-        baseline = csv_paths[0].stem
-        compare = csv_paths[1].stem if len(csv_paths) > 1 else None
-        base_col = f"{baseline}_avg_time"
-        cmp_col = f"{compare}_avg_time" if compare else None
+        n_files = len(csv_paths)
+        total_funcs = len(df)
 
-        # Only compute differences for functions that exist in both traces (intersection)
-        if cmp_col:
-            intersection_mask = df[base_col].notna() & df[cmp_col].notna()
-            intersection_df = df[intersection_mask]
-            base_total = intersection_df[base_col].sum(skipna=True)
-            cmp_total = intersection_df[cmp_col].sum(skipna=True)
-            time_diff = cmp_total - base_total
-            pct_diff = (time_diff / base_total * 100) if base_total else 0
+        # Count significant changes (>5% diff in any comparison)
+        diff_cols = [c for c in df.columns if c.endswith("_avg_diff_pct")]
+        if diff_cols:
+            significant = int(df[diff_cols].abs().gt(5).any(axis=1).sum())
         else:
-            base_total = cmp_total = time_diff = pct_diff = 0
+            significant = 0
 
-        # Significant changes
-        diff_cols = df.filter(regex="_avg_perf_diff$")
-        significant_changes = int(diff_cols.stack(dropna=True).abs().gt(5).sum())
+        # Compute per-comparison summaries with richer metrics
+        summaries = []
+        for idx in range(1, n_files):
+            base_col = "baseline_avg"
+            cmp_col = f"cmp{idx}_avg"
+            diff_col = f"cmp{idx}_avg_diff_ns"
+            diff_pct_col = f"cmp{idx}_avg_diff_pct"
+
+            if cmp_col not in df.columns:
+                continue
+
+            # Functions in common (both have valid data)
+            mask = df[base_col].notna() & df[cmp_col].notna()
+            funcs_in_common = int(mask.sum())
+
+            # Significant changes for THIS comparison
+            sig_mask = mask & (df[diff_pct_col].abs() > 5) if diff_pct_col in df.columns else mask
+            sig_count = int(sig_mask.sum()) if diff_pct_col in df.columns else 0
+
+            # Count improvements (negative diff = faster) and regressions (positive = slower)
+            if diff_pct_col in df.columns:
+                improvements_count = int((mask & (df[diff_pct_col] < -5)).sum())
+                regressions_count = int((mask & (df[diff_pct_col] > 5)).sum())
+            else:
+                improvements_count = regressions_count = 0
+
+            # Total time calculations
+            base_sum = df.loc[mask, base_col].sum()
+            cmp_sum = df.loc[mask, cmp_col].sum()
+            diff_sum = df.loc[mask, diff_col].sum() if diff_col in df.columns else cmp_sum - base_sum
+            pct = (diff_sum / base_sum * 100) if base_sum else 0.0
+
+            summaries.append({
+                "compare_idx": idx,
+                "file_name": csv_paths[idx].stem,
+                "baseline_name": csv_paths[0].stem,
+                "funcs_in_common": funcs_in_common,
+                "significant_changes": sig_count,
+                "improvements_count": improvements_count,
+                "regressions_count": regressions_count,
+                "base_total_ns": float(base_sum),
+                "cmp_total_ns": float(cmp_sum),
+                "diff_ns": float(diff_sum),
+                "diff_pct": float(pct),
+            })
+
+        # Backward compatibility with HTML template
+        if summaries:
+            avg_perf = {
+                "human_diff": summaries[0]["diff_ns"],
+                "pct_diff": summaries[0]["diff_pct"],
+                "base_total": summaries[0]["base_total_ns"],
+                "cmp_total": summaries[0]["cmp_total_ns"],
+            }
+        else:
+            avg_perf = {"human_diff": 0.0, "pct_diff": 0.0, "base_total": 0.0, "cmp_total": 0.0}
 
         return {
-            "total_functions": int(len(df)),
-            "significant_changes": significant_changes,
-            "avg_performance": {
-                "human_diff": float(time_diff),
-                "pct_diff": float(pct_diff),
-                "base_total": float(base_total),
-                "cmp_total": float(cmp_total),
-            },
+            "total_functions": total_funcs,
+            "significant_changes": significant,
+            "comparisons": summaries,
+            "avg_performance": avg_perf,
+            "file_names": [p.stem for p in csv_paths],
         }
 
     def _compute_top_changes(self, df: pd.DataFrame, csv_paths: Sequence[Path], n: int = 10) -> dict:
-        """Compute top N improvements and regressions by absolute time saved/lost."""
-        import numpy as np
+        """Compute top N improvements and regressions per comparison by absolute time saved/lost."""
+        if len(csv_paths) < 2:
+            return {"comparisons": []}
 
-        compare = csv_paths[1].stem if len(csv_paths) > 1 else None
-        if not compare:
-            return {"improvements": [], "regressions": []}
-        # Melt to long format for diffs
-        diffs = df.melt(
-            "function_name", value_vars=df.filter(regex="_avg_perf_diff$").columns, var_name="metric", value_name="diff"
-        ).dropna()
-        significant = diffs.loc[diffs["diff"].abs() > 0]
-        if significant.empty:
-            return {"improvements": [], "regressions": []}
+        baseline_name = csv_paths[0].stem
+        comparisons = []
 
-        # Attach times
-        def _attach_times(row):
-            comp = row.metric.replace("_avg_perf_diff", "")
-            base_col = next((c for c in df.columns if c.endswith("_avg_time") and comp not in c), None)
-            if base_col is None:
-                base_col = next(c for c in df.columns if c.endswith("_avg_time"))
-            cmp_col = f"{comp}_avg_time"
-            func_row = df.loc[df.function_name == row.function_name]
-            if func_row.empty:
-                return pd.Series({"base": np.nan, "cmp": np.nan, "delta_ns": np.nan})
-            base_ns = func_row[base_col].iat[0]
-            cmp_ns = func_row[cmp_col].iat[0]
-            delta_ns = cmp_ns - base_ns if pd.notna(cmp_ns) and pd.notna(base_ns) else np.nan
-            return pd.Series(
-                {
-                    "base": base_ns,
-                    "cmp": cmp_ns,
-                    "delta_ns": delta_ns,
+        for idx in range(1, len(csv_paths)):
+            diff_col = f"cmp{idx}_avg_diff_ns"
+            pct_col = f"cmp{idx}_avg_diff_pct"
+            avg_col = f"cmp{idx}_avg"
+            cmp_name = csv_paths[idx].stem
+
+            if diff_col not in df.columns:
+                continue
+
+            valid = df[df[diff_col].notna()].copy()
+
+            def to_dict(r, diff_c=diff_col, pct_c=pct_col, avg_c=avg_col):
+                return {
+                    "function_name": r["function_name"],
+                    "diff": float(r.get(pct_c, float("nan"))),
+                    "base": float(r["baseline_avg"]),
+                    "cmp": float(r[avg_c]),
+                    "delta_ns": float(r[diff_c]),
                 }
-            )
 
-        times = significant.apply(_attach_times, axis=1)
-        significant = pd.concat([significant, times], axis=1)
-        significant = significant[pd.notna(significant["delta_ns"])]
-        # Split before taking top N
-        improvs = significant[significant["delta_ns"] < 0].sort_values("delta_ns").head(n)
-        regs = significant[significant["delta_ns"] > 0].sort_values("delta_ns", ascending=False).head(n)
+            # Improvements: negative diff (faster)
+            improvs = valid[valid[diff_col] < 0].nsmallest(n, diff_col)
+            improvements = [to_dict(row) for _, row in improvs.iterrows()]
 
-        # Return improvements and regressions as list of dicts
+            # Regressions: positive diff (slower)
+            regs = valid[valid[diff_col] > 0].nlargest(n, diff_col)
+            regressions = [to_dict(row) for _, row in regs.iterrows()]
 
-        def _to_dicts(df):
-            return [
-                {
-                    "function_name": r.function_name,
-                    "diff": r.diff,
-                    "base": r.base,
-                    "cmp": r.cmp,
-                    "delta_ns": r.delta_ns,
-                }
-                for r in df.itertuples()
-            ]
+            comparisons.append({
+                "baseline_name": baseline_name,
+                "compare_name": cmp_name,
+                "compare_idx": idx,
+                "improvements": improvements,
+                "regressions": regressions,
+            })
 
+        # Backward compatibility: also include flat improvements/regressions from first comparison
+        first = comparisons[0] if comparisons else {"improvements": [], "regressions": []}
         return {
-            "improvements": _to_dicts(improvs),
-            "regressions": _to_dicts(regs),
+            "comparisons": comparisons,
+            "improvements": first.get("improvements", []),
+            "regressions": first.get("regressions", []),
         }

@@ -15,28 +15,50 @@ logger = logging.getLogger(__name__)
 # ────────────────────────────────────────────────────────────────────────────────
 #  Constants & helpers
 # ────────────────────────────────────────────────────────────────────────────────
-NS, US, MS, S = 1, 1_000, 1_000_000, 1_000_000_000  # 1 ns, 1 µs, 1 ms, 1 s
+US, MS, S = 1_000, 1_000_000, 1_000_000_000  # 1 µs, 1 ms, 1 s in nanoseconds
 SUB_100_MS = 100 * MS
 
 
 def _human_time(ns: float | pd.NA) -> str:
+    """Convert nanoseconds to human-readable time string."""
     if pd.isna(ns):
         return "<span class='perf-missing'>N/A</span>"
-    US, MS, S = 1_000, 1_000_000, 1_000_000_000
-    if ns < 0:
-        ns = abs(ns)
-    if ns < US:
-        return f"{ns:.0f}\u00a0ns"
-    if ns < MS:
-        return f"{ns / US:.1f}\u00a0µs"
-    if ns < S:
-        return f"{ns / MS:.1f}\u00a0ms"
-    return f"{ns / S:.2f}\u00a0s"
+    abs_ns = abs(ns)
+    if abs_ns < US:
+        return f"{abs_ns:.0f}\u00a0ns"
+    if abs_ns < MS:
+        return f"{abs_ns / US:.1f}\u00a0µs"
+    if abs_ns < S:
+        return f"{abs_ns / MS:.1f}\u00a0ms"
+    return f"{abs_ns / S:.2f}\u00a0s"
+
+
+def _perf_class(pct: float, threshold: float = 2.0) -> str:
+    """Return CSS class based on performance percentage change."""
+    if pct < -threshold:
+        return "perf-good"
+    if pct > threshold:
+        return "perf-bad"
+    return "perf-neutral"
 
 
 def _fmt_pct(p: float | pd.NA, base_ns: float | pd.NA = pd.NA, cmp_ns: float | pd.NA = pd.NA) -> str:
-    if pd.isna(p):
+    """Format percentage diff with time delta and actual measurement.
+
+    Handles cases:
+    - Both baseline and comparison present: show "time_diff %diff\\nmeasure_time"
+    - Baseline missing, comparison present: show "NEW" + comparison time
+    - Comparison missing: show "N/A"
+    """
+    # If comparison is missing, show N/A
+    if pd.isna(cmp_ns):
         return "<span class='perf-missing'>N/A</span>"
+
+    # If baseline is missing but comparison exists, show as NEW function
+    if pd.isna(base_ns) or pd.isna(p):
+        human_time = _human_time(cmp_ns)
+        data_attrs = f" data-cmp-ns='{cmp_ns}'"
+        return f"<span class='perf-new'{data_attrs}>NEW<br><span class='measure-time'>{human_time}</span></span>"
 
     cls: str
     if p < -5:
@@ -49,16 +71,18 @@ def _fmt_pct(p: float | pd.NA, base_ns: float | pd.NA = pd.NA, cmp_ns: float | p
         cls = "perf-neutral"
     sign = "+" if p > 0 else ""
     # Compute absolute time delta
-    if pd.notna(base_ns) and pd.notna(cmp_ns):
-        delta_ns = cmp_ns - base_ns
-        human_delta = _human_time(delta_ns)
-        delta_attr = f" data-delta-ns='{delta_ns}'"
-        # Show percent and time delta on separate lines for clarity
-        delta_str = f"<br><span class='delta-time'>{human_delta}</span>"
-    else:
-        delta_attr = ""
-        delta_str = ""
-    return f"<span class='{cls}'{delta_attr}>{sign}{p:.1f}%{delta_str}</span>"
+    delta_ns = cmp_ns - base_ns
+    human_delta = _human_time(delta_ns)
+    human_measure = _human_time(cmp_ns)
+    # Store both delta and cmp value - use cmp_ns for time-based sorting
+    data_attrs = f" data-delta-ns='{delta_ns}' data-cmp-ns='{cmp_ns}'"
+    # Format: "time_diff %diff" on first line, "measure_time" on second line
+    return (
+        f"<span class='{cls}'{data_attrs}>"
+        f"<span class='delta-time'>{human_delta}</span> {sign}{p:.1f}%"
+        f"<br><span class='measure-time'>{human_measure}</span>"
+        f"</span>"
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -97,109 +121,239 @@ class TracyCompareHTML(TracyCompareHdf5):
         ]
         return "\n".join(cards)
 
-    def _table(self, df: pd.DataFrame, baseline: str) -> str:
+    def _table(self, df: pd.DataFrame, file_names: list[str]) -> str:
         """Return a fully styled HTML <table>."""
+        baseline_name = file_names[0] if file_names else "Baseline"
+        cmp_names = file_names[1:] if len(file_names) > 1 else ["Compare"]
+
+        # Metric labels mapping
+        metric_labels = {
+            "min": "Min",
+            "avg": "Avg",
+            "max": "Max",
+            "count": "Calls",
+        }
 
         def _header_text(col: str) -> str:
-            mapping = {
-                "function_name": "Function Name",
-                "avg_time": "Avg",
-                "min_time": "Min",
-                "max_time": "Max",
-                "call_count": "Calls",
-                "avg_perf_diff": "Avg Δ%",
-                "min_perf_diff": "Min Δ%",
-                "max_perf_diff": "Max Δ%",
-            }
-            for key, txt in mapping.items():
-                if col.endswith(key):
-                    if baseline in col:
-                        return txt.replace("Avg", "Baseline Avg") if "Avg" in txt else txt.replace(" ", " Baseline ")
-                    if any(col.endswith(f"_{suffix}") for suffix in ("avg_time", "min_time", "max_time", "call_count")):
-                        return txt.replace("Avg", "Compare Avg") if "Avg" in txt else txt.replace(" ", " Compare ")
-                    return txt
-            return col  # fallback
+            if col == "function_name":
+                return "Function"
+            if col.startswith("baseline_"):
+                suffix = col.replace("baseline_", "")
+                label = metric_labels.get(suffix, suffix.title())
+                return f"<span class='col-baseline'>{label}</span>"
+            if col.startswith("cmp"):
+                parts = col.split("_", 1)
+                idx = int(parts[0].replace("cmp", "")) - 1
+                metric = parts[1] if len(parts) > 1 else ""
+                if metric == "avg_diff_pct":
+                    return f"<span class='col-compare col-compare-{idx + 1}'>Δ%</span>"
+                label = metric_labels.get(metric, metric.title())
+                return f"<span class='col-compare col-compare-{idx + 1}'>{label}</span>"
+            return col
 
-        header_row = "".join(f"<th>{_header_text(c)}</th>" for c in df.columns)
+        # Define column order: function, baseline (min/avg/max/count), then comparisons
+        baseline_cols = ["baseline_min", "baseline_avg", "baseline_max", "baseline_count"]
+        baseline_cols = [c for c in baseline_cols if c in df.columns]
+
+        # Get comparison columns in order
+        cmp_prefixes = sorted(set(c.split("_")[0] for c in df.columns if c.startswith("cmp")))
+        cmp_cols = []
+        for prefix in cmp_prefixes:
+            for suffix in ["min", "avg", "max", "count", "avg_diff_pct"]:
+                col = f"{prefix}_{suffix}"
+                if col in df.columns:
+                    cmp_cols.append(col)
+
+        # Filter out _diff_ns columns
+        display_cols = ["function_name"] + baseline_cols + cmp_cols
+        display_cols = [c for c in display_cols if not c.endswith("_diff_ns")]
+
+        # Track group boundaries for separators
+        # Last column index of each group (0-indexed)
+        group_last_cols = set()
+        if baseline_cols:
+            group_last_cols.add(len(baseline_cols))  # After function_name + baseline cols
+        col_idx = 1 + len(baseline_cols)  # Start after function + baseline
+        for prefix in cmp_prefixes:
+            prefix_cols = [c for c in cmp_cols if c.startswith(prefix)]
+            col_idx += len(prefix_cols)
+            group_last_cols.add(col_idx - 1)
+
+        # Build header with group headers
+        baseline_header = (
+            f"<th colspan='{len(baseline_cols)}' class='group-header baseline-group'>"
+            f"🏁 Baseline<br><em>{baseline_name}</em></th>"
+        )
+
+        cmp_headers = []
+        for i, prefix in enumerate(cmp_prefixes):
+            prefix_cols = [c for c in cmp_cols if c.startswith(prefix)]
+            name = cmp_names[i] if i < len(cmp_names) else f"Compare {i + 1}"
+            cmp_headers.append(
+                f"<th colspan='{len(prefix_cols)}' class='group-header compare-group compare-group-{i + 1}'>"
+                f"🔬 Compare {i + 1}<br><em>{name}</em></th>"
+            )
+
+        group_header_row = f"<th></th>{baseline_header}{''.join(cmp_headers)}"
+
+        # Build column headers with separator classes
+        col_headers = []
+        for i, c in enumerate(display_cols):
+            sep_class = " group-sep" if i in group_last_cols else ""
+            col_headers.append(f"<th class='{sep_class}'>{_header_text(c)}</th>")
+        col_header_row = "".join(col_headers)
 
         body_rows: list[str] = []
         for _, row in df.iterrows():
             cells: list[str] = []
-            for col, val in row.items():
+            for col_i, col in enumerate(display_cols):
+                val = row[col]
+                sep_class = " group-sep" if col_i in group_last_cols else ""
                 if col == "function_name":
-                    cells.append(f"<td><strong>{val}</strong></td>")
-                elif "perf_diff" in col:
-                    metric = col.replace("_perf_diff", "_time")
-                    base_ns = row.get(metric.replace(col.split("_")[0], baseline), pd.NA)
-                    cmp_ns = row.get(metric, pd.NA)
-                    cells.append(f"<td>{_fmt_pct(val, base_ns, cmp_ns)}</td>")
-                elif "time" in col:
-                    cells.append(f"<td class='time-value'>{_human_time(val)}</td>")
+                    cells.append(f"<td class='col-function{sep_class}'><strong>{val}</strong></td>")
+                elif col.endswith("_avg_diff_pct"):
+                    prefix = col.replace("_avg_diff_pct", "")
+                    base_ns = row.get("baseline_avg", pd.NA)
+                    cmp_ns = row.get(f"{prefix}_avg", pd.NA)
+                    cells.append(f"<td class='col-diff{sep_class}'>{_fmt_pct(val, base_ns, cmp_ns)}</td>")
+                elif col.startswith("cmp") and ("_min" in col or "_avg" in col or "_max" in col):
+                    # Compare min/avg/max time - show with percentage diff like Δ% column
+                    # Determine which baseline metric to compare against
+                    if "_min" in col:
+                        base_ns = row.get("baseline_min", pd.NA)
+                    elif "_max" in col:
+                        base_ns = row.get("baseline_max", pd.NA)
+                    else:  # _avg
+                        base_ns = row.get("baseline_avg", pd.NA)
+                    # Calculate percentage diff for this specific metric
+                    if pd.notna(base_ns) and pd.notna(val) and base_ns != 0:
+                        metric_diff_pct = ((val - base_ns) / base_ns) * 100
+                    else:
+                        metric_diff_pct = pd.NA
+                    cells.append(f"<td class='col-diff{sep_class}'>{_fmt_pct(metric_diff_pct, base_ns, val)}</td>")
+                elif "_min" in col or "_avg" in col or "_max" in col:
+                    # Baseline min/avg/max - no coloring, just time value
+                    cells.append(f"<td class='time-value{sep_class}'>{_human_time(val)}</td>")
+                elif "_count" in col:
+                    cells.append(f"<td class='count-value{sep_class}'>{int(val) if pd.notna(val) else '-'}</td>")
                 else:
-                    cells.append(f"<td>{val if pd.notna(val) else '-'}</td>")
+                    cells.append(f"<td class='{sep_class.strip()}'>{val if pd.notna(val) else '-'}</td>")
             body_rows.append("<tr>" + "".join(cells) + "</tr>")
 
-        return f"<thead><tr>{header_row}</tr></thead><tbody>{''.join(body_rows)}</tbody>"
+        return (
+            f"<thead><tr class='group-headers'>{group_header_row}</tr>"
+            f"<tr class='col-headers'>{col_header_row}</tr></thead>"
+            f"<tbody>{''.join(body_rows)}</tbody>"
+        )
 
-    def _significant_changes(self, top_changes: dict) -> str:
-        """Render HTML for top improvements/regressions from precomputed dict."""
-        improvs = top_changes.get("improvements", [])
-        regs = top_changes.get("regressions", [])
+    def _significant_changes(self, top_changes: dict, summary: dict) -> str:
+        """Render HTML for top improvements/regressions per comparison with summary stats."""
+        comparisons = top_changes.get("comparisons", [])
+        summary_comparisons = {s["compare_idx"]: s for s in summary.get("comparisons", [])}
+
+        # Fallback for legacy format (single improvements/regressions lists)
+        if not comparisons:
+            comparisons = [{
+                "baseline_name": "Baseline",
+                "compare_name": "Compare",
+                "compare_idx": 1,
+                "improvements": top_changes.get("improvements", []),
+                "regressions": top_changes.get("regressions", []),
+            }]
+
+        def _metric_card(icon: str, label: str, value: str, css_class: str = "") -> str:
+            cls = f"mini-metric {css_class}" if css_class else "mini-metric"
+            return (
+                f"<div class='{cls}'>"
+                f"<span class='mini-icon'>{icon}</span>"
+                f"<span class='mini-value'>{value}</span>"
+                f"<span class='mini-label'>{label}</span>"
+                f"</div>"
+            )
 
         def _block(title: str, icon: str, data: list, cls: str) -> str:
+            section_class = "improvements" if cls == "perf-good" else "regressions"
+            action = "saved" if cls == "perf-good" else "lost"
+
             if not data:
                 items = f"<p class='change-item'>No significant {title.lower().replace('top ', '')} found.</p>"
             else:
                 item_html = []
                 for r in data:
+                    diff = r["diff"]
+                    delta = _human_time(r["delta_ns"])
+                    base = _human_time(r["base"])
+                    cmp = _human_time(r["cmp"])
                     item_html.append(
-                        f"""<div class='change-item'>
-                        <span class='change-function'>{r['function_name']}</span>
-                        <div class='change-values'>
-                            <span class='change-value {cls}'>{{:+.1f}}% ({{}} {{}})</span>
-                            <span class='change-time-diff'>{{}} → {{}}</span>
-                        </div>
-                    </div>""".format(
-                            r["diff"],
-                            _human_time(r["delta_ns"]),
-                            "saved" if cls == "perf-good" else "lost",
-                            _human_time(r["base"]),
-                            _human_time(r["cmp"]),
-                        )
+                        f"<div class='change-item'>"
+                        f"<span class='change-function'>{r['function_name']}</span>"
+                        f"<div class='change-values'>"
+                        f"<span class='change-value {cls}'>{diff:+.1f}% ({delta} {action})</span>"
+                        f"<span class='change-time-diff'>{base} → {cmp}</span>"
+                        f"</div></div>"
                     )
                 items = "".join(item_html)
-            section_class = "improvements" if cls == "perf-good" else "regressions"
-            return f"<div class='change-section {section_class}'>" f"<h3>{icon} {title}</h3>" f"{items}</div>"
 
-        return (
-            "<div class='changes-grid'>"
-            + _block("Top 10 Improvements (by AVG time saved)", "🚀", improvs, "perf-good")
-            + _block("Top 10 Regressions (by AVG time lost)", "⚠️", regs, "perf-bad")
-            + "</div>"
-        )
+            return f"<div class='change-section {section_class}'><h3>{icon} {title}</h3>{items}</div>"
+
+        sections_html = []
+        for cmp in comparisons:
+            baseline = cmp.get("baseline_name", "Baseline")
+            compare = cmp.get("compare_name", "Compare")
+            cmp_idx = cmp.get("compare_idx", 1)
+            improvs = cmp.get("improvements", [])
+            regs = cmp.get("regressions", [])
+
+            # Get per-comparison summary stats
+            stats = summary_comparisons.get(cmp_idx, {})
+            funcs_common = stats.get("funcs_in_common", "?")
+            sig_changes = stats.get("significant_changes", 0)
+            improv_count = stats.get("improvements_count", len(improvs))
+            regress_count = stats.get("regressions_count", len(regs))
+            diff_ns = stats.get("diff_ns", 0)
+            diff_pct = stats.get("diff_pct", 0)
+
+            # Determine performance class
+            perf_class = _perf_class(diff_pct)
+            perf_sign = "+" if diff_pct > 0 else ""
+
+            header = f"<h3 class='comparison-header'>📊 {baseline} vs {compare}</h3>"
+
+            # Mini metrics row
+            metrics_row = (
+                "<div class='comparison-metrics'>"
+                + _metric_card("🔗", "Functions", str(funcs_common))
+                + _metric_card("⚡", "Changed", str(sig_changes), perf_class if sig_changes > 0 else "")
+                + _metric_card("🚀", "Faster", str(improv_count), "perf-good" if improv_count > 0 else "")
+                + _metric_card("⚠️", "Slower", str(regress_count), "perf-bad" if regress_count > 0 else "")
+                + _metric_card("📊", "Overall", f"{_human_time(diff_ns)} ({perf_sign}{diff_pct:.1f}%)", perf_class)
+                + "</div>"
+            )
+
+            grid = (
+                "<div class='changes-grid'>"
+                + _block("🚀 Top 10 Improvements", "", improvs, "perf-good")
+                + _block("⚠️ Top 10 Regressions", "", regs, "perf-bad")
+                + "</div>"
+            )
+            sections_html.append(f"<div class='comparison-block'>{header}{metrics_row}{grid}</div>")
+
+        return "\n".join(sections_html)
 
     def _render(self, df: pd.DataFrame, paths: Sequence[Path], summary: dict, top_changes: dict) -> str:
+        file_names = summary.get("file_names", [p.stem for p in paths])
+        pct_diff = summary["avg_performance"]["pct_diff"]
+        perf_class = _perf_class(pct_diff)
+
         ctx = {
             "total_functions": summary["total_functions"],
             "significant_changes": summary["significant_changes"],
-            "avg_performance": f"{_human_time(summary['avg_performance']['human_diff'])} ({summary['avg_performance']['pct_diff']:+.1f}%)",
-            "avg_perf_class": (
-                "perf-good"
-                if summary["avg_performance"]["pct_diff"] < -2
-                else "perf-bad" if summary["avg_performance"]["pct_diff"] > 2 else "perf-neutral"
-            ),
-            "overall_class": (
-                (
-                    "perf-good"
-                    if summary["avg_performance"]["pct_diff"] < -2
-                    else "perf-bad" if summary["avg_performance"]["pct_diff"] > 2 else "perf-neutral"
-                )
-                if summary["significant_changes"]
-                else "perf-neutral"
-            ),
+            "avg_performance": f"{_human_time(summary['avg_performance']['human_diff'])} ({pct_diff:+.1f}%)",
+            "avg_perf_class": perf_class,
+            "overall_class": perf_class if summary["significant_changes"] else "perf-neutral",
             "files_info": self._files_info(paths),
-            "comparison_table": self._table(df, paths[0].stem),
-            "significant_changes_content": self._significant_changes(top_changes),
+            "comparison_table": self._table(df, file_names),
+            "significant_changes_content": self._significant_changes(top_changes, summary),
             "generation_date": datetime.datetime.now().strftime("%B %d, %Y at %I:%M %p"),
         }
         return _HTML_TEMPLATE.format(**ctx)
@@ -414,6 +568,75 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
       font-weight: 600;
       text-align: center;
     }}
+    .comparison-block {{
+      margin-bottom: 2.5rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 2px solid var(--border);
+    }}
+    .comparison-block:last-child {{
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }}
+    .comparison-header {{
+      font-size: 1.35rem;
+      font-weight: 600;
+      color: var(--primary-dark);
+      margin-bottom: 1.25rem;
+      padding: 0.75rem 1rem;
+      background: linear-gradient(90deg, var(--bg), transparent);
+      border-left: 4px solid var(--primary);
+      border-radius: 0 0.5rem 0.5rem 0;
+    }}
+    .comparison-metrics {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+      justify-content: center;
+    }}
+    .mini-metric {{
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 0.75rem 1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      min-width: 90px;
+      min-height: 80px;
+      box-shadow: var(--shadow-sm);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }}
+    .mini-metric:hover {{
+      transform: translateY(-2px);
+      box-shadow: var(--shadow);
+    }}
+    .mini-metric.perf-good {{
+      border-color: var(--success);
+      background: var(--success-bg);
+      border-radius: 0.5rem;
+    }}
+    .mini-metric.perf-bad {{
+      border-color: var(--error);
+      background: var(--error-bg);
+      border-radius: 0.5rem;
+    }}
+    .mini-icon {{ font-size: 1.1rem; margin-bottom: 0.25rem; }}
+    .mini-value {{
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text);
+    }}
+    .mini-metric.perf-good .mini-value {{ color: var(--success); }}
+    .mini-metric.perf-bad .mini-value {{ color: var(--error); }}
+    .mini-label {{
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }}
     .change-item {{
       display: flex;
       justify-content: space-between;
@@ -503,23 +726,101 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     tbody tr:hover {{
       background: #e3eaff;
     }}
-    /* Separator after baseline column */
-    th:nth-child(5), td:nth-child(5) {{ border-right: 2px solid var(--border); }}
+
+    /* ── Table Group Headers ───────────────────────────────────────────── */
+    .group-headers th {{
+      text-align: center;
+      vertical-align: middle;
+      padding: 1rem 0.5rem;
+      font-size: 1rem;
+    }}
+    .group-header {{
+      border-bottom: 2px solid var(--border);
+    }}
+    .group-header em {{
+      font-size: 0.85rem;
+      opacity: 0.8;
+    }}
+    .baseline-group {{
+      background: linear-gradient(180deg, #e3f2fd, #bbdefb);
+      border-left: 3px solid #1976d2;
+      border-right: 3px solid #1976d2;
+    }}
+    .compare-group {{
+      background: linear-gradient(180deg, #fff3e0, #ffe0b2);
+      border-left: 3px solid #f57c00;
+      border-right: 3px solid #f57c00;
+    }}
+    .compare-group-2 {{
+      background: linear-gradient(180deg, #f3e5f5, #e1bee7);
+      border-left: 3px solid #7b1fa2;
+      border-right: 3px solid #7b1fa2;
+    }}
+    .compare-group-3 {{
+      background: linear-gradient(180deg, #e8f5e9, #c8e6c9);
+      border-left: 3px solid #388e3c;
+      border-right: 3px solid #388e3c;
+    }}
+    .col-headers th {{
+      font-size: 0.8rem;
+      padding: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }}
+    .col-baseline {{
+      color: #1565c0;
+    }}
+    .col-compare {{
+      color: #e65100;
+    }}
+    .col-compare-2 {{
+      color: #6a1b9a;
+    }}
+    .col-compare-3 {{
+      color: #2e7d32;
+    }}
+    .col-function {{
+      text-align: left;
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+    .col-diff {{
+      text-align: center;
+    }}
+    .group-sep {{
+      border-right: 3px solid var(--border) !important;
+    }}
+    .col-headers th.group-sep {{
+      border-right: 3px solid var(--primary) !important;
+    }}
+    .count-value {{
+      text-align: center;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    }}
 
     /* ── Performance Labels ────────────────────────────────────────────── */
-    .perf-good, .perf-bad, .perf-neutral, .perf-warning, .perf-missing {{
+    .perf-good, .perf-bad, .perf-neutral, .perf-warning, .perf-missing, .perf-new {{
       padding: 0.25rem 0.5rem;
       border-radius: 999px;
       display: inline-block;
       font-weight: 500;
       font-size: 0.85rem;
+      text-align: center;
     }}
     .perf-good {{ background: var(--success-bg); color: var(--success); }}
     .perf-bad {{ background: var(--error-bg); color: var(--error); }}
     .perf-neutral {{ color: var(--muted); background: #f8f9fa; }}
+
+    /* Time value cells with performance coloring */
+    td.time-value.perf-good {{ background: var(--success-bg); color: var(--success); font-weight: 600; }}
+    td.time-value.perf-bad {{ background: var(--error-bg); color: var(--error); font-weight: 600; }}
+    td.time-value.perf-neutral {{ background: #f8f9fa; }}
     .perf-warning {{ color: #856404; background: #fff3cd; }}
     .perf-missing {{ color: var(--missing-text); font-style: italic; background: #f8f9fa; }}
-    .delta-time {{ font-size: 0.85em; color: var(--muted); margin-left: 0.3em; white-space: nowrap; }}
+    .perf-new {{ color: #0277bd; background: #e1f5fe; font-weight: 600; }}
+    .delta-time {{ font-size: 0.85em; margin-right: 0.3em; white-space: nowrap; }}
+    .measure-time {{ font-size: 0.8em; color: var(--muted); white-space: nowrap; font-style: italic; }}
     .time-value {{
       font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
       font-size: 0.9rem;
@@ -571,7 +872,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     document.addEventListener('DOMContentLoaded', function() {{
       const table = document.getElementById('comparison-table');
       if (!table) return;
-      const ths = table.querySelectorAll('thead th');
+      const ths = table.querySelectorAll('thead tr.col-headers th');
       ths.forEach((th, idx) => {{
         th.style.cursor = 'pointer';
         th.title = 'Click to sort';
@@ -595,7 +896,17 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
             return NaN;
           }}
           rows.sort((a, b) => {{
-            // Prefer data-delta-ns attribute for delta columns
+            // First try data-cmp-ns for actual time value sorting (comparison columns)
+            let aCmp = a.children[idx].querySelector('[data-cmp-ns]');
+            let bCmp = b.children[idx].querySelector('[data-cmp-ns]');
+            if (aCmp && bCmp) {{
+              let aVal = parseFloat(aCmp.getAttribute('data-cmp-ns'));
+              let bVal = parseFloat(bCmp.getAttribute('data-cmp-ns'));
+              if (!isNaN(aVal) && !isNaN(bVal)) {{
+                return asc ? aVal - bVal : bVal - aVal;
+              }}
+            }}
+            // Fallback to data-delta-ns for delta-only columns
             let aDelta = a.children[idx].querySelector('[data-delta-ns]');
             let bDelta = b.children[idx].querySelector('[data-delta-ns]');
             if (aDelta && bDelta) {{
