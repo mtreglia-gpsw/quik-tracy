@@ -33,6 +33,12 @@ class TracyBuilderLocal(TracyBuilderBase):
             runner.run_streaming(["git", "checkout", self.ref], cwd=source_path)
         else:
             logger.debug(f"Tracy repository already exists at {source_path}")
+            # Check if current ref matches the expected ref
+            current_ref = self._get_current_git_ref(source_path, runner)
+            if current_ref != self.ref:
+                logger.info(f"Switching from {current_ref} to {self.ref}")
+                runner.run_streaming(["git", "fetch", "--all", "--tags"], cwd=source_path)
+                runner.run_streaming(["git", "checkout", self.ref], cwd=source_path)
 
         # Extract tool name without 'tracy-' prefix for directory lookup
         tool_dir = self.tool_name.replace("tracy-", "")
@@ -82,6 +88,24 @@ class TracyBuilderLocal(TracyBuilderBase):
     def is_available() -> bool:
         """Check if git and cmake are available."""
         return ProcessRunner.which("git") is not None and ProcessRunner.which("cmake") is not None
+
+    def _get_current_git_ref(self, source_path: Path, runner: ProcessRunner) -> str:
+        """Get the current git ref (tag, branch, or commit hash)."""
+        # First try to get exact tag match (check=False to handle non-tag cases)
+        result = runner.run(
+            ["git", "describe", "--tags", "--exact-match"],
+            cwd=source_path,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+
+        # Fall back to commit hash
+        result = runner.run(["git", "rev-parse", "HEAD"], cwd=source_path, check=False)
+        if result.returncode == 0:
+            return result.stdout.strip()
+
+        return ""
 
     def get_executable_path(self) -> Path | None:
         """Get the specific install path for this tool's executable."""
