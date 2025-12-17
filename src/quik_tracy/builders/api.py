@@ -10,7 +10,7 @@ from .engines import TracyBuilderLocal, TracyBuilderDocker
 logger = logging.getLogger(__name__)
 
 BRANCH = "master"
-REF = "v0.13.1"
+REF = "3258599899ecfd0d5d901b577cbc555fa645d6e4"
 
 
 class BuildMode(Enum):
